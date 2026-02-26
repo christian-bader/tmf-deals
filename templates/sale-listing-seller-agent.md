@@ -2,7 +2,7 @@ Hi Mia,
 
 Saw your listing at 383 Westbourne — beautiful spot.
 
-I run a private lending fund in Del Mar. We do business-purpose loans for investors — bridge loans, flips, new builds, that kind of thing. We've done a ton of deals in SoCal so we can usually close in under 10 days.
+I run a private lending fund in Del Mar. We do business-purpose loans for investors — bridge loans, flips, new builds, that kind of thing. We can usually close in under 10 days.
 
 No need to respond — just wanted to introduce myself in case you ever have an investor client who needs to move fast.
 
