@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: theme('fontFamily.sans');
+  background: radial-gradient(circle at top left, #f5f5f7, #e5e7eb 55%);
+  color: #0f172a;
+}
+
+#root {
+  min-height: 100vh;
+}
+
