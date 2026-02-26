@@ -3,6 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, CircleMarker, Tooltip } from 'react-leaflet'
 import { supabase } from '../lib/supabaseClient.ts'
 
+function OutLinkIcon({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg className={`shrink-0 ${className}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+    </svg>
+  )
+}
+
 type Listing = {
   id: string
   address: string | null
@@ -14,12 +22,13 @@ type Listing = {
   sale_date: string | null
   latitude?: number | null
   longitude?: number | null
+  source_url?: string | null
 }
 
 async function fetchListings() {
   const { data, error } = await supabase
     .from('listings')
-    .select('id,address,city,state,zip,price,status,sale_date')
+    .select('id,address,city,state,zip,price,status,sale_date,latitude,longitude,source_url')
     .order('sale_date', { ascending: false })
     .limit(300)
 
@@ -66,13 +75,14 @@ export function ListingsPage() {
     <div className="flex h-full flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Listings</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Explore active, pending, and sold properties on the map or in the
-            list.
+          <h2 className="text-[1.125rem] font-semibold tracking-[-0.02em] text-[#1a1d21]">
+            Listings
+          </h2>
+          <p className="mt-0.5 text-[13px] text-[#6b7280]">
+            Explore active, pending, and sold properties on the map or in the list.
           </p>
         </div>
-        <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 shadow-sm">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-white px-3 py-1.5 text-[12px] text-[#374151] shadow-panel">
           <span>Filter:</span>
           <select
             className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 focus:outline-none"
@@ -91,17 +101,17 @@ export function ListingsPage() {
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
+      {isLoading && <p className="text-[13px] text-[#6b7280]">Loading…</p>}
       {isError && (
-        <p className="text-sm text-rose-500">
+        <p className="text-[13px] text-[#dc2626]">
           Failed to load listings: {(error as Error).message}
         </p>
       )}
 
       {filtered && filtered.length > 0 && (
-        <div className="flex h-[520px] gap-6 rounded-3xl bg-white/80 p-4 shadow-[0_18px_60px_rgba(15,23,42,0.12)] ring-1 ring-slate-200 backdrop-blur-sm">
+        <div className="flex h-[520px] gap-5 rounded-xl border border-[#e5e7eb] bg-white p-4 shadow-panel">
           {/* Map */}
-          <div className="w-[55%] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+          <div className="w-[55%] overflow-hidden rounded-lg border border-[#e5e7eb] bg-[#f9fafb]">
             {mapCenter ? (
               <MapContainer
                 center={mapCenter}
@@ -159,6 +169,17 @@ export function ListingsPage() {
                               ? new Date(l.sale_date).toLocaleDateString()
                               : '—'}
                           </div>
+                          {l.source_url && l.source_url.startsWith('http') && (
+                            <a
+                              href={l.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 inline-flex items-center gap-1 font-medium text-sky-600 hover:underline"
+                            >
+                              <OutLinkIcon className="h-3.5 w-3.5" />
+                              Open source
+                            </a>
+                          )}
                         </div>
                       </Tooltip>
                     </CircleMarker>
@@ -166,21 +187,22 @@ export function ListingsPage() {
                 })}
               </MapContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-500">
+              <div className="flex h-full items-center justify-center text-[13px] text-[#6b7280]">
                 No coordinates available for these listings yet.
               </div>
             )}
           </div>
 
           {/* List */}
-          <div className="flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+          <div className="flex-1 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white">
+            <div className="border-b border-[#e5e7eb] bg-[#f9fafb] px-4 py-2.5 text-[11px] font-medium uppercase tracking-wider text-[#6b7280]">
               Listings ({filtered.length})
             </div>
             <div className="h-full overflow-auto">
               <table className="min-w-full border-separate border-spacing-0 text-sm">
-                <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                <thead className="sticky top-0 bg-[#f9fafb] text-[#6b7280]">
                   <tr>
+                    <th className="w-9 px-1 py-2" aria-label="Source link" />
                     <th className="px-3 py-2 text-left font-medium">Address</th>
                     <th className="px-3 py-2 text-left font-medium">Status</th>
                     <th className="px-3 py-2 text-right font-medium">Price</th>
@@ -190,38 +212,59 @@ export function ListingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((l) => (
-                    <tr
-                      key={l.id}
-                      className="border-t border-slate-100 hover:bg-slate-50"
-                    >
-                      <td className="px-3 py-2 align-top">
-                        <div className="text-slate-900">
-                          {l.address || '(no address)'}
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500">
-                          {[l.city, l.state, l.zip].filter(Boolean).join(', ')}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 align-top text-xs font-medium uppercase tracking-wide text-slate-600">
-                        {l.status}
-                      </td>
-                      <td className="px-3 py-2 align-top text-right text-slate-900">
-                        {typeof l.price === 'number'
-                          ? l.price.toLocaleString('en-US', {
-                              style: 'currency',
-                              currency: 'USD',
-                              maximumFractionDigits: 0,
-                            })
-                          : '—'}
-                      </td>
-                      <td className="px-3 py-2 align-top text-slate-600">
-                        {l.sale_date
-                          ? new Date(l.sale_date).toLocaleDateString()
-                          : '—'}
-                      </td>
-                    </tr>
-                  ))}
+                  {filtered.map((l) => {
+                    const hasLink = Boolean(l.source_url && l.source_url.startsWith('http'))
+                    return (
+                      <tr
+                        key={l.id}
+                        className="border-t border-[#f3f4f6] hover:bg-[#f9fafb]"
+                      >
+                        <td className="px-1 py-2 align-top">
+                          {hasLink ? (
+                            <a
+                              href={l.source_url!}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex rounded p-1.5 text-[#6b7280] hover:bg-[#e5e7eb] hover:text-sky-600"
+                              title="Open listing source in new tab"
+                              aria-label="Open listing source in new tab"
+                            >
+                              <OutLinkIcon />
+                            </a>
+                          ) : (
+                            <span className="inline-flex rounded p-1.5 text-[#d1d5db]" title="No source link">
+                              <OutLinkIcon />
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 align-top">
+                          <div className="text-[#1a1d21]">
+                            {l.address || '(no address)'}
+                          </div>
+                          <div className="mt-0.5 text-xs text-[#6b7280]">
+                            {[l.city, l.state, l.zip].filter(Boolean).join(', ')}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 align-top text-xs font-medium uppercase tracking-wide text-[#374151]">
+                          {l.status}
+                        </td>
+                        <td className="px-3 py-2 align-top text-right text-[#1a1d21]">
+                          {typeof l.price === 'number'
+                            ? l.price.toLocaleString('en-US', {
+                                style: 'currency',
+                                currency: 'USD',
+                                maximumFractionDigits: 0,
+                              })
+                            : '—'}
+                        </td>
+                        <td className="px-3 py-2 align-top text-[#6b7280]">
+                          {l.sale_date
+                            ? new Date(l.sale_date).toLocaleDateString()
+                            : '—'}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

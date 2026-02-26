@@ -4,6 +4,7 @@
 
 - [x] **Buyer's agent extraction** - Add fields for buyer's agent (name, DRE, brokerage, phone, email) from "Bought with" section on Redfin listings
   - Usage: `python scrape_current_listings.py --all-zips --sold --output daily/recently_sold.csv`
+- [ ] **Daily scraper pipeline** - Create logic to run scraper every day and append new results as well as update old ones
 
 - [ ] **BUILD ROBUST SCRAPER** - Current scraper has data quality issues:
   - ~135/212 sold listings missing agent name
@@ -33,3 +34,12 @@
 ## Data Linking
 
 - [ ] Link listings to parcel shapes (see investigation notes below)
+
+
+## Front end
+
+- [ ] **Lite CRM** - Send last emails and view responses and activity from sent emails (functionally a lite CRM)
+
+## Gmail
+
+- [ ] **Gmail integration** - Send emails and look at the inbox 

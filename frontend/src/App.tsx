@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
+import { PageErrorBoundary } from './PageErrorBoundary'
 
 const navLinkBase = 'rounded-lg px-3 py-2 text-sm font-medium transition-colors'
 
@@ -14,26 +15,26 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
-    <div className="min-h-screen">
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-6">
-        <header className="mb-6 flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-[#f8f9fa]">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-5 py-5">
+        <header className="mb-5 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+            <h1 className="text-[1.25rem] font-semibold tracking-[-0.02em] text-[#1a1d21]">
               TMF Deals Outreach
             </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Broker opportunities, email queue, and listings from Supabase.
+            <p className="mt-0.5 text-[13px] text-[#6b7280]">
+              Broker opportunities, email queue, and listings.
             </p>
           </div>
-          <div className="rounded-full border border-slate-200 bg-white/80 px-4 py-1 text-xs text-slate-500 shadow-sm">
-            Supabase + Gmail · Trinity Mortgage Fund
-          </div>
+          <span className="text-[12px] text-[#6b7280]">
+            Trinity Mortgage Fund
+          </span>
         </header>
 
-        <div className="flex flex-1 gap-6">
+        <div className="flex flex-1 gap-5">
           <aside
-            className={`shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-white/90 p-3 shadow-sm transition-[width] duration-200 ${
-              sidebarCollapsed ? 'w-[52px]' : 'w-60'
+            className={`shrink-0 overflow-hidden rounded-xl border border-[#e5e7eb] bg-white p-2.5 shadow-panel transition-[width] duration-200 ${
+              sidebarCollapsed ? 'w-[52px]' : 'w-56'
             }`}
           >
             <nav className="flex flex-col gap-1 text-sm">
@@ -46,8 +47,8 @@ function App() {
                   className={({ isActive }) =>
                     `${navLinkBase} flex items-center ${
                       isActive
-                        ? 'bg-slate-900 text-white shadow-sm'
-                        : 'text-slate-700 hover:bg-slate-100'
+                        ? 'bg-[#1a1d21] text-white'
+                        : 'text-[#374151] hover:bg-[#f3f4f6]'
                     }`
                   }
                 >
@@ -62,7 +63,7 @@ function App() {
             <button
               type="button"
               onClick={() => setSidebarCollapsed((c) => !c)}
-              className="mt-3 flex w-full items-center justify-center rounded-lg py-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+              className="mt-2 flex w-full items-center justify-center rounded-lg py-2 text-[#6b7280] transition-colors hover:bg-[#f3f4f6] hover:text-[#374151]"
               title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
             >
               {sidebarCollapsed ? (
@@ -77,9 +78,11 @@ function App() {
             </button>
           </aside>
 
-          <main className="flex-1 min-w-0">
-            <div className="h-full rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)]">
-              <Outlet />
+          <main className="min-w-0 flex-1">
+            <div className="h-full rounded-xl border border-[#e5e7eb] bg-white p-5 shadow-panel">
+              <PageErrorBoundary>
+                <Outlet />
+              </PageErrorBoundary>
             </div>
           </main>
         </div>

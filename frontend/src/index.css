@@ -12,8 +12,12 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: theme('fontFamily.sans');
-  background: radial-gradient(circle at top left, #f5f5f7, #e5e7eb 55%);
-  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #f8f9fa;
+  color: #1a1d21;
 }
 
 #root {

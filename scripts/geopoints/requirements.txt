@@ -1,0 +1,2 @@
+# For enrich_supabase_listings_geopoints.py
+supabase>=2.0.0

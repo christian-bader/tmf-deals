@@ -1,27 +1,23 @@
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient.ts'
 
-type CountResult = { count: number | null }
-
 type Counts = {
   potentialOutreaches: number
   listingsBeingAssessed: number
 }
 
 async function fetchCounts(): Promise<Counts> {
-  const [{ count: outreachCount }, { data: emails, error: emailsError }] =
-    await Promise.all([
-      supabase
-        .from('outreach_opportunities')
-        .select('*', { count: 'exact', head: true }) as Promise<
-        CountResult & { error: unknown }
-      >,
-      supabase
-        .from('suggested_emails')
-        .select('new_listing_ids,status'),
-    ])
+  const [outreachRes, { data: emails, error: emailsError }] = await Promise.all([
+    supabase
+      .from('outreach_opportunities')
+      .select('*', { count: 'exact', head: true }),
+    supabase.from('suggested_emails').select('new_listing_ids,status'),
+  ])
 
   if (emailsError) throw emailsError
+
+  const outreachCount =
+    outreachRes && 'count' in outreachRes ? (outreachRes as { count: number | null }).count : null
 
   const listingIdSet = new Set<string>()
   ;(emails ?? []).forEach((e) => {
@@ -34,7 +30,7 @@ async function fetchCounts(): Promise<Counts> {
   })
 
   return {
-    potentialOutreaches: outreachCount ?? 0,
+    potentialOutreaches: outreachCount != null ? outreachCount : 0,
     listingsBeingAssessed: listingIdSet.size,
   }
 }
@@ -46,18 +42,20 @@ export function DashboardPage() {
   })
 
   return (
-    <div className="flex h-full flex-col gap-6">
+    <div className="flex h-full flex-col gap-5">
       <div>
-        <h2 className="text-lg font-semibold text-slate-900">Dashboard</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <h2 className="text-[1.125rem] font-semibold tracking-[-0.02em] text-[#1a1d21]">
+          Dashboard
+        </h2>
+        <p className="mt-0.5 text-[13px] text-[#6b7280]">
           Snapshot of who you can reach out to and the listings they&apos;re
           attached to.
         </p>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Loading counts…</p>}
+      {isLoading && <p className="text-[13px] text-[#6b7280]">Loading…</p>}
       {isError && (
-        <p className="text-sm text-rose-500">
+        <p className="text-[13px] text-[#dc2626]">
           Could not load counts. Check Supabase credentials.
         </p>
       )}
@@ -80,11 +78,13 @@ export function DashboardPage() {
 
 function DashboardCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm transition-transform duration-150 hover:-translate-y-0.5">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+    <div className="rounded-xl border border-[#e5e7eb] bg-white px-5 py-4 shadow-panel">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-[#6b7280]">
         {label}
       </p>
-      <p className="mt-3 text-3xl font-semibold text-slate-900">{value}</p>
+      <p className="mt-2.5 text-2xl font-semibold tracking-[-0.02em] text-[#1a1d21]">
+        {value}
+      </p>
     </div>
   )
 }
