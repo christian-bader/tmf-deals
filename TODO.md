@@ -5,9 +5,6 @@
 - [x] **Buyer's agent extraction** - Add fields for buyer's agent (name, DRE, brokerage, phone, email) from "Bought with" section on Redfin listings
   - Usage: `python scrape_current_listings.py --all-zips --sold --output daily/recently_sold.csv`
 
-- [x] **Co-listing support** - Extract full info for both agents when property is co-listed
-  - Fields: `co_listing_agent`, `co_listing_agent_dre`, `co_listing_brokerage`, `co_listing_agent_phone`, `co_listing_agent_email`, `is_co_listed`
-
 - [ ] **BUILD ROBUST SCRAPER** - Current scraper has data quality issues:
   - ~135/212 sold listings missing agent name
   - ~105/212 sold listings missing email  
@@ -15,6 +12,8 @@
   - Need fallback strategies when primary patterns fail
   - Consider using Selenium/Playwright for JS-rendered content
   - Add validation layer to flag suspicious data (Redfin corporate DRE, email-name mismatches)
+
+  - CRITICAL: **Co-listing support** - Extract full info for both agents when property is co-listed
 
 ## Contact Enrichment
 
