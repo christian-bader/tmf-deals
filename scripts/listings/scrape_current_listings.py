@@ -68,6 +68,13 @@ class ListingRecord:
     brokerage: str = ""
     agent_phone: str = ""
     agent_email: str = ""
+    # Co-listing agent (for properties listed by multiple agents)
+    co_listing_agent: str = ""
+    co_listing_agent_dre: str = ""
+    co_listing_brokerage: str = ""
+    co_listing_agent_phone: str = ""
+    co_listing_agent_email: str = ""
+    # Buyer's agent (for sold properties)
     buyer_agent: str = ""
     buyer_agent_dre: str = ""
     buyer_brokerage: str = ""
@@ -76,6 +83,7 @@ class ListingRecord:
     mls_number: str = ""
     days_on_market: str = ""
     description: str = ""
+    is_co_listed: str = ""  # "true" if co-listed, empty otherwise
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
 
@@ -281,19 +289,82 @@ def fetch_listing_details(url: str) -> Optional[ListingRecord]:
     
     # Extract listing agent info
     # Format: "Listed by Carol Mundell • DRE # 00863002 • Century 21 Affiliated • 858-967-7331"
-    listed_by_match = re.search(
-        r'Listed by\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\s*[•·]\s*DRE\s*#?\s*(\d{7,8})\s*[•·]\s*([^•·]+?)(?:\s*[•·]|$)',
-        page_text
-    )
-    if listed_by_match:
-        record.listing_agent = listed_by_match.group(1).strip()
-        record.agent_dre = listed_by_match.group(2).strip()
-        brokerage_raw = listed_by_match.group(3).strip()
-        # Clean up brokerage - stop at common suffixes
-        brokerage_clean = re.split(r'\s+\d{3}[-.\s]|\s+Details\s+provided|\s+Listing\s+', brokerage_raw)[0]
-        record.brokerage = brokerage_clean.strip()
+    # Note: Properties can be co-listed by multiple agents
+    # Parse each "Listed by" block separately to handle co-listings correctly
     
-    # Fallback: Try to find DRE separately if not found
+    def parse_agent_block(block: str) -> dict:
+        """Parse a single 'Listed by' block into agent info."""
+        result = {'name': '', 'dre': '', 'brokerage': '', 'phone': '', 'email': ''}
+        
+        # Parse name + DRE (handles names like O'Brien, OByrne, etc.)
+        name_dre = re.search(
+            r"Listed by\s+([A-Z][a-zA-Z'\-]+(?:\s+[A-Z][a-zA-Z'\-]+){1,3})\s*[•·]\s*DRE\s*#?\s*(\d{7,8})",
+            block
+        )
+        if not name_dre:
+            return result
+        
+        result['name'] = name_dre.group(1).strip()
+        result['dre'] = name_dre.group(2).strip()
+        
+        # Parse brokerage (text after DRE #, before phone/email/end)
+        after_dre = block[name_dre.end():]
+        brokerage_match = re.match(r"\s*[•·]\s*([A-Za-z][A-Za-z0-9\s\-&'\.,]+?)(?:\s*[•·]|$)", after_dre)
+        if brokerage_match:
+            brokerage_raw = brokerage_match.group(1).strip()
+            # Clean up - stop at common suffixes
+            brokerage_clean = re.split(r'\s+Listing\s+|\s+Details\s+', brokerage_raw)[0]
+            result['brokerage'] = brokerage_clean.strip()
+        
+        # Parse phone
+        phone_match = re.search(r'(\d{3}[-.\s]\d{3}[-.\s]\d{4})', block)
+        if phone_match:
+            result['phone'] = phone_match.group(1)
+        
+        # Parse email
+        email_match = re.search(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', block)
+        if email_match:
+            result['email'] = email_match.group(1).lower()
+        
+        return result
+    
+    # Split by 'Listed by' and parse each block
+    agent_blocks = re.split(r'(?=Listed by)', page_text)
+    agent_blocks = [b for b in agent_blocks if b.startswith('Listed by')]
+    
+    all_agents = [parse_agent_block(b) for b in agent_blocks]
+    all_agents = [a for a in all_agents if a['dre']]  # Filter out failed parses
+    
+    if all_agents:
+        # Use the first agent as primary
+        primary = all_agents[0]
+        record.listing_agent = primary['name']
+        record.agent_dre = primary['dre']
+        record.brokerage = primary['brokerage']
+        record.agent_phone = primary['phone']
+        record.agent_email = primary['email']
+        
+        # Store co-listing agent info (if any) - we capture the first co-listing agent
+        if len(all_agents) > 1:
+            co_agent = all_agents[1]
+            record.is_co_listed = "true"
+            record.co_listing_agent = co_agent['name']
+            record.co_listing_agent_dre = co_agent['dre']
+            record.co_listing_brokerage = co_agent['brokerage']
+            record.co_listing_agent_phone = co_agent['phone']
+            record.co_listing_agent_email = co_agent['email']
+    
+    # Fallback: Try simpler pattern if complex one didn't match
+    if not record.agent_dre:
+        simple_match = re.search(
+            r"Listed by\s+([A-Z][a-zA-Z'\-]+(?:\s+[A-Z][a-zA-Z'\-]+){1,3})\s*[•·]\s*DRE\s*#?\s*(\d{7,8})",
+            page_text
+        )
+        if simple_match:
+            record.listing_agent = simple_match.group(1).strip()
+            record.agent_dre = simple_match.group(2).strip()
+    
+    # Last resort: Try to find DRE separately if not found
     if not record.agent_dre:
         dre_match = re.search(r'DRE\s*#?\s*(\d{7,8})', page_text)
         if dre_match:
@@ -339,10 +410,11 @@ def fetch_listing_details(url: str) -> Optional[ListingRecord]:
     if dom_match:
         record.days_on_market = dom_match.group(1)
     
-    # Extract phone number (listing agent)
-    phone_match = re.search(r'(\(\d{3}\)\s*\d{3}[-.\s]?\d{4}|\d{3}[-.\s]\d{3}[-.\s]\d{4})', page_text)
-    if phone_match:
-        record.agent_phone = phone_match.group(1)
+    # Extract phone number (listing agent) - only if not already found in Listed by block
+    if not record.agent_phone:
+        phone_match = re.search(r'(\(\d{3}\)\s*\d{3}[-.\s]?\d{4}|\d{3}[-.\s]\d{3}[-.\s]\d{4})', page_text)
+        if phone_match:
+            record.agent_phone = phone_match.group(1)
 
     # Extract buyer's agent info (for sold properties)
     # Format: "Bought with Robert Brown • DRE # 01796328 • Fantastik Realty • 858-397-3108 (agent) • RobBrownVegas@gmail.com"
@@ -368,47 +440,60 @@ def fetch_listing_details(url: str) -> Optional[ListingRecord]:
         record.buyer_agent_email = bought_email_match.group(1).lower()
 
     # Extract agent email - multiple strategies
-    # Strategy 1: Look for "Contact:" pattern often used by Redfin
-    contact_email_match = re.search(r'Contact:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', page_text, re.I)
-    if contact_email_match:
-        record.agent_email = contact_email_match.group(1).lower()
+    # Note: For co-listings, we need to ensure the email matches the PRIMARY agent
     
-    # Strategy 2: Look for email in JSON data (agentEmail, email, listingAgentEmail fields)
+    # Skip if already found in Listed by block
     if not record.agent_email:
-        json_email_patterns = [
-            r'"agentEmail"[:\s]*"([^"]+@[^"]+)"',
-            r'"listingAgentEmail"[:\s]*"([^"]+@[^"]+)"',
-            r'"email"[:\s]*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"',
-        ]
-        for pattern in json_email_patterns:
-            match = re.search(pattern, html_content, re.I)
-            if match:
-                record.agent_email = match.group(1).lower()
-                break
-    
-    # Strategy 3: Look for email near agent name or DRE number
-    if not record.agent_email and record.listing_agent:
-        # Look for email within 200 chars of agent name
-        agent_name_pattern = re.escape(record.listing_agent.split()[0])  # First name
-        context_match = re.search(
-            rf'{agent_name_pattern}.{{0,200}}?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{{2,}})',
-            page_text, re.I
-        )
-        if context_match:
-            record.agent_email = context_match.group(1).lower()
-    
-    # Strategy 4: General email extraction - find any email that looks like agent email
-    # Exclude common non-agent emails like support@, info@, privacy@, etc.
-    if not record.agent_email:
-        all_emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', page_text)
-        excluded_prefixes = ['support', 'info', 'privacy', 'contact', 'help', 'admin', 'noreply', 'no-reply', 'sales', 'marketing']
-        for email in all_emails:
-            email_lower = email.lower()
-            prefix = email_lower.split('@')[0]
-            # Skip excluded prefixes and redfin.com emails
-            if not any(prefix.startswith(ex) for ex in excluded_prefixes) and 'redfin.com' not in email_lower:
-                record.agent_email = email_lower
-                break
+        # Strategy 1: Look for "Contact:" pattern often used by Redfin
+        contact_email_match = re.search(r'Contact:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', page_text, re.I)
+        if contact_email_match:
+            record.agent_email = contact_email_match.group(1).lower()
+        
+        # Strategy 2: Look for email in JSON data (agentEmail, email, listingAgentEmail fields)
+        if not record.agent_email:
+            json_email_patterns = [
+                r'"agentEmail"[:\s]*"([^"]+@[^"]+)"',
+                r'"listingAgentEmail"[:\s]*"([^"]+@[^"]+)"',
+                r'"email"[:\s]*"([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"',
+            ]
+            for pattern in json_email_patterns:
+                match = re.search(pattern, html_content, re.I)
+                if match:
+                    record.agent_email = match.group(1).lower()
+                    break
+        
+        # Strategy 3: Look for email near agent name or DRE number
+        # Be strict - only match if it contains agent's first name to avoid co-listing mixups
+        if not record.agent_email and record.listing_agent:
+            agent_first_name = record.listing_agent.split()[0].lower()
+            agent_last_name = record.listing_agent.split()[-1].lower() if len(record.listing_agent.split()) > 1 else ''
+            
+            # Find all emails on page
+            all_emails = re.findall(r'([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', page_text)
+            excluded_prefixes = ['support', 'info', 'privacy', 'contact', 'help', 'admin', 'noreply', 'no-reply', 'sales', 'marketing']
+            
+            for email in all_emails:
+                email_lower = email.lower()
+                prefix = email_lower.split('@')[0]
+                
+                # Skip system emails and redfin emails
+                if any(prefix.startswith(ex) for ex in excluded_prefixes) or 'redfin.com' in email_lower:
+                    continue
+                
+                # Prefer emails that contain agent's name
+                if agent_first_name in prefix or agent_last_name in prefix:
+                    record.agent_email = email_lower
+                    break
+            
+            # Fallback: use first non-excluded email only if there's exactly one agent
+            # (no co-listing detected) to avoid mixups
+            if not record.agent_email and not hasattr(record, 'notes'):
+                for email in all_emails:
+                    email_lower = email.lower()
+                    prefix = email_lower.split('@')[0]
+                    if not any(prefix.startswith(ex) for ex in excluded_prefixes) and 'redfin.com' not in email_lower:
+                        record.agent_email = email_lower
+                        break
     
     return record
 

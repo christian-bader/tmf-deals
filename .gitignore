@@ -152,13 +152,19 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# Local S3 data
+# Local data
 data/
+data.zip
+.DS_Store
+supabase-schema-diagram.html
 
 # Gmail OAuth credentials
 scripts/outreach/credentials.json
 scripts/outreach/token.json
 scripts/outreach/sent_emails.csv
+
+# Import conflict logs
+scripts/db/conflicts.json
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
