@@ -56,6 +56,7 @@ class ScraperConfig:
     zip_codes: list[str]
     min_price: int
     max_price: int
+    config_id: Optional[int] = None  # scrape_configuration.id when loaded from DB
 
 
 def get_supabase_client() -> Client:
@@ -76,7 +77,7 @@ def fetch_scrape_config() -> ScraperConfig:
     client = get_supabase_client()
     result = (
         client.table("scrape_configuration")
-        .select("zipcodes, minimum_listing_price, maximum_listing_price")
+        .select("id, zipcodes, minimum_listing_price, maximum_listing_price")
         .eq("active", True)
         .limit(1)
         .execute()
@@ -100,7 +101,10 @@ def fetch_scrape_config() -> ScraperConfig:
     max_p = row.get("maximum_listing_price")
     min_price = int(min_p) if min_p is not None else 1_500_000
     max_price = int(max_p) if max_p is not None else 20_000_000
-    return ScraperConfig(zip_codes=zip_codes, min_price=min_price, max_price=max_price)
+    config_id = row.get("id")
+    if config_id is not None:
+        config_id = int(config_id)
+    return ScraperConfig(zip_codes=zip_codes, min_price=min_price, max_price=max_price, config_id=config_id)
 
 
 @dataclass
@@ -146,6 +150,7 @@ class ListingRecord:
     description: str = ""
     is_co_listed: str = ""  # "true" if co-listed, empty otherwise
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    scrape_instance_id: str = ""  # UUID of scrape_instances row for this run
 
 
 def get_headers():
@@ -624,6 +629,25 @@ def main():
     
     zips_to_scrape = config.zip_codes if args.all_zips else [args.zip]
     
+    # Create a scrape_instances row for this run (if we have a config id from Supabase)
+    scrape_instance_id = None
+    if config.config_id is not None:
+        try:
+            client = get_supabase_client()
+            result = (
+                client.table("scrape_instances")
+                .insert({
+                    "scrape_configuration_id": config.config_id,
+                    "listings_count": 0,
+                })
+                .execute()
+            )
+            if result.data and len(result.data) > 0:
+                scrape_instance_id = result.data[0]["id"]
+                print(f"Created scrape instance: {scrape_instance_id}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: could not create scrape_instances row: {e}", file=sys.stderr)
+    
     all_listings = []
     
     # Load existing URLs for incremental mode
@@ -673,6 +697,8 @@ def main():
             print(f"    [{i+1}/{len(listing_urls)}] Fetching: {url[:60]}...", file=sys.stderr)
             record = fetch_listing_details(url)
             if record:
+                if scrape_instance_id:
+                    record.scrape_instance_id = str(scrape_instance_id)
                 all_listings.append(record)
                 # Write immediately to file (incremental save)
                 with open(output_path, "a", newline="", encoding="utf-8") as f:
@@ -685,6 +711,16 @@ def main():
             time.sleep(5)
 
     print(f"\nTotal listings scraped: {len(all_listings)}", file=sys.stderr)
+    
+    # Update scrape_instances with final count
+    if scrape_instance_id is not None:
+        try:
+            client = get_supabase_client()
+            client.table("scrape_instances").update(
+                {"listings_count": len(all_listings)}
+            ).eq("id", scrape_instance_id).execute()
+        except Exception as e:
+            print(f"Warning: could not update scrape_instances count: {e}", file=sys.stderr)
     
     print(f"Wrote {len(all_listings)} listings to {output_path}", file=sys.stderr)
     

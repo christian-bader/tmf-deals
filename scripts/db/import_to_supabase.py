@@ -134,6 +134,9 @@ def upsert_listing(supabase: Client, row: dict, is_sold: bool = False) -> Option
         'source_platform': 'redfin',
         'scraped_at': row.get('scraped_at', '').strip() or None,
     }
+    scrape_instance_id = (row.get('scrape_instance_id') or '').strip()
+    if scrape_instance_id:
+        listing_data['scrape_instance_id'] = scrape_instance_id
     
     listing_data = {k: v for k, v in listing_data.items() if v is not None}
     

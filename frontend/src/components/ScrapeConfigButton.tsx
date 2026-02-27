@@ -105,6 +105,9 @@ export function ScrapeConfigButton() {
         setLoading(false)
         if (e) {
           setError(e.message)
+          const fallbackZips = [...DEFAULT_ZIPCODES]
+          setSelectedZipcodes(fallbackZips)
+          setZipcodesText(fallbackZips.join('\n'))
           return
         }
         const row = data as ScrapeConfigRow | null
@@ -136,18 +139,34 @@ export function ScrapeConfigButton() {
         .from('scrape_configuration')
         .update({ active: false })
         .eq('active', true)
-      if (updateErr) throw updateErr
+      if (updateErr) {
+        console.error('Scrape config update error:', updateErr)
+        throw updateErr
+      }
 
-      const { error: insertErr } = await supabase.from('scrape_configuration').insert({
+      const payload = {
         zipcodes: { zipcodes: zipsToSave },
         minimum_listing_price: min,
         maximum_listing_price: max,
         active: true,
-      })
-      if (insertErr) throw insertErr
+      }
+      const { error: insertErr } = await supabase
+        .from('scrape_configuration')
+        .insert(payload)
+      if (insertErr) {
+        console.error('Scrape config insert error:', insertErr)
+        const msg = insertErr.details ? `${insertErr.message} (${insertErr.details})` : insertErr.message
+        throw new Error(msg)
+      }
       setOpen(false)
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save configuration.')
+      const message =
+        e != null && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string'
+          ? (e as { message: string }).message
+          : e instanceof Error
+            ? e.message
+            : 'Failed to save configuration.'
+      setError(message)
     } finally {
       setSaving(false)
     }
