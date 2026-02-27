@@ -19,6 +19,7 @@ Downloaded from:
 | `build_state_geodata.py` | `us_states.geojson` + `.csv` | All US state boundaries |
 | `build_county_geodata.py` | `us_counties.geojson` + `.csv` | All US county boundaries |
 | `build_zcta_geodata.py` | `us_zctas.geojson` + `.csv` | All US ZIP Code Tabulation Areas |
+| `build_socal_zctas.py` | `frontend/public/socal_zctas.geojson` | SoCal ZCTAs only (for Search Configuration map) |
 
 ## Usage
 

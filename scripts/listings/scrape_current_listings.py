@@ -19,6 +19,7 @@ Note: Use responsibly with rate limiting. For personal use only.
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 import time
@@ -30,16 +31,76 @@ from urllib.parse import quote
 
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from supabase import create_client, Client
 
-# Target zip codes
+# Load .env from repo root
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path)
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("VITE_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("VITE_SUPABASE_ANON_KEY")
+
+# Fallback zip codes when not using Supabase config (e.g. imports by daily_pipeline)
 TARGET_ZIPS = [
-    # San Diego
     "92037", "92014", "92075", "92024", "92007", "92118", "92106", "92107",
     "92109", "92011", "92008", "92130", "92127", "92029",
-    # Orange County
     "92651", "92629", "92624", "92672", "92657", "92625", "92663", "92661",
     "92662", "92648", "92649",
 ]
+
+
+@dataclass
+class ScraperConfig:
+    """Scraping configuration from Supabase scrape_configuration (active row)."""
+    zip_codes: list[str]
+    min_price: int
+    max_price: int
+
+
+def get_supabase_client() -> Client:
+    """Create Supabase client from environment variables."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError(
+            "Missing SUPABASE_URL or SUPABASE_KEY (or VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY).\n"
+            "Set them in .env or export for scrape config lookup."
+        )
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def fetch_scrape_config() -> ScraperConfig:
+    """
+    Load the active row from Supabase scrape_configuration.
+    Table columns: id, created_at, zipcodes (jsonb), minimum_listing_price, maximum_listing_price, active.
+    """
+    client = get_supabase_client()
+    result = (
+        client.table("scrape_configuration")
+        .select("zipcodes, minimum_listing_price, maximum_listing_price")
+        .eq("active", True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data or len(result.data) == 0:
+        raise ValueError(
+            "No active scrape_configuration found in Supabase. "
+            "Ensure one row has active = true."
+        )
+    row = result.data[0]
+    # zipcodes: jsonb is either {"zipcodes": ["92037", ...]} or a raw array
+    raw_zips = row.get("zipcodes")
+    if isinstance(raw_zips, dict) and "zipcodes" in raw_zips:
+        raw_zips = raw_zips["zipcodes"]
+    raw_zips = raw_zips or []
+    if isinstance(raw_zips, (list, tuple)):
+        zip_codes = [str(z).strip() for z in raw_zips if z is not None]
+    else:
+        zip_codes = [str(raw_zips).strip()]
+    min_p = row.get("minimum_listing_price")
+    max_p = row.get("maximum_listing_price")
+    min_price = int(min_p) if min_p is not None else 1_500_000
+    max_price = int(max_p) if max_p is not None else 20_000_000
+    return ScraperConfig(zip_codes=zip_codes, min_price=min_price, max_price=max_price)
 
 
 @dataclass
@@ -499,29 +560,30 @@ def fetch_listing_details(url: str) -> Optional[ListingRecord]:
 
 
 def main():
+    config = fetch_scrape_config()
     parser = argparse.ArgumentParser(
         description="Scrape current Redfin listings and extract broker info"
     )
     parser.add_argument(
         "--zip", "-z",
-        help="Single zip code to scrape"
+        help="Single zip code to scrape (overrides config zip codes)"
     )
     parser.add_argument(
         "--all-zips", "-a",
         action="store_true",
-        help="Scrape all target zip codes"
+        help="Scrape all zip codes from active scrape_configuration"
     )
     parser.add_argument(
         "--min-price",
         type=int,
-        default=1_500_000,
-        help="Minimum price (default: 1500000)"
+        default=config.min_price,
+        help=f"Minimum price (default from config: {config.min_price})"
     )
     parser.add_argument(
         "--max-price",
         type=int,
-        default=20_000_000,
-        help="Maximum price (default: 20000000)"
+        default=config.max_price,
+        help=f"Maximum price (default from config: {config.max_price})"
     )
     parser.add_argument(
         "--output", "-o",
@@ -560,7 +622,7 @@ def main():
     if not args.zip and not args.all_zips:
         parser.error("Must specify either --zip or --all-zips")
     
-    zips_to_scrape = TARGET_ZIPS if args.all_zips else [args.zip]
+    zips_to_scrape = config.zip_codes if args.all_zips else [args.zip]
     
     all_listings = []
     
