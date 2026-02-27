@@ -13,9 +13,11 @@ Usage:
 import argparse
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import anthropic
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -25,7 +27,11 @@ load_dotenv(PROJECT_ROOT / '.env')
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
 TEMPLATES_DIR = PROJECT_ROOT / 'templates'
+
+# Trinity HQ city for special messaging
+HQ_CITY = "Del Mar"
 
 # Template mapping by listing status + role
 TEMPLATES = {
@@ -41,11 +47,164 @@ EXCLUDED_EMAILS = {
     'craig@clgproperties.com',
 }
 
+# Cache for TMF deals (loaded once at startup)
+TMF_DEALS_CACHE = None
+
 
 def get_supabase_client() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
+def get_anthropic_client() -> anthropic.Anthropic:
+    if not ANTHROPIC_API_KEY:
+        raise ValueError("Missing ANTHROPIC_API_KEY")
+    return anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+
+def fetch_tmf_deals(supabase: Client) -> list:
+    """Fetch all TMF deals from Supabase (cached)."""
+    global TMF_DEALS_CACHE
+    if TMF_DEALS_CACHE is not None:
+        return TMF_DEALS_CACHE
+    
+    result = supabase.table('deals').select('*').execute()
+    TMF_DEALS_CACHE = result.data or []
+    return TMF_DEALS_CACHE
+
+
+def extract_city(city_state: str) -> str:
+    """Extract city from 'City, ST' format."""
+    if not city_state:
+        return ""
+    return city_state.split(',')[0].strip()
+
+
+def months_since(date_str: str) -> int:
+    """Calculate months since a date string (YYYY-MM-DD)."""
+    if not date_str:
+        return 999
+    try:
+        deal_date = datetime.strptime(date_str[:10], '%Y-%m-%d')
+        now = datetime.now()
+        return (now.year - deal_date.year) * 12 + (now.month - deal_date.month)
+    except:
+        return 999
+
+
+def find_relevant_deals(listing_city: str, deals: list) -> dict:
+    """
+    Find TMF deals relevant to a listing's location.
+    
+    Returns context dict for LLM with:
+    - listing_city: the city of the listing
+    - is_hq_city: True if Del Mar
+    - recent_deals: list of deals in same city (within 12 months)
+    - older_deals: list of deals in same city (older than 12 months)
+    - total_deals_in_city: count
+    """
+    listing_city_lower = (listing_city or "").lower().strip()
+    if not listing_city_lower:
+        return None
+    
+    is_hq_city = listing_city_lower == HQ_CITY.lower()
+    
+    city_deals = []
+    for deal in deals:
+        deal_city = extract_city(deal.get('location', '')).lower()
+        if deal_city == listing_city_lower:
+            months = months_since(deal.get('date'))
+            city_deals.append({
+                'street': deal.get('display_address', ''),
+                'city': extract_city(deal.get('location', '')),
+                'months_ago': months,
+                'date': deal.get('date'),
+            })
+    
+    if not city_deals:
+        return None
+    
+    # Sort by recency
+    city_deals.sort(key=lambda x: x['months_ago'])
+    
+    recent = [d for d in city_deals if d['months_ago'] <= 12]
+    older = [d for d in city_deals if d['months_ago'] > 12]
+    
+    return {
+        'listing_city': listing_city,
+        'is_hq_city': is_hq_city,
+        'recent_deals': recent[:3],  # Limit to top 3 most recent
+        'older_deals': older[:2],
+        'total_deals_in_city': len(city_deals),
+    }
+
+
+def generate_local_deal_line(context: dict, client: anthropic.Anthropic) -> tuple[str, bool]:
+    """
+    Use Claude to generate a natural sentence about local TMF deals.
+    
+    Returns (sentence, is_hq_format) tuple.
+    - is_hq_format is True if the sentence includes "I run a private lending fund" (for HQ city)
+    """
+    if not context:
+        return "", False
+    
+    is_hq = context.get('is_hq_city', False)
+    
+    if is_hq:
+        system_prompt = """You write a single sentence for a cold email from a private lender (Trinity Mortgage Fund) to a real estate agent.
+
+The agent's listing is in Del Mar, where Trinity is headquartered. Write ONE sentence that combines introducing the fund with mentioning a local deal.
+
+IMPORTANT: Start with exactly "I run a private lending fund headquartered in Del Mar" then add the deal reference.
+
+Example: "I run a private lending fund headquartered in Del Mar and we just closed a deal over on Balboa Ave a few months ago."
+
+Rules:
+- Keep it casual and under 25 words
+- Don't mention loan amounts or borrower details
+- Use a specific street name from the deals provided
+- Use natural time references ("a few months ago", "last month", "recently")
+- Return ONLY the sentence, no quotes or explanation"""
+    else:
+        system_prompt = """You write a single sentence for a cold email from a private lender (Trinity Mortgage Fund) to a real estate agent.
+
+Given facts about TMF's deal history near the agent's listing, write ONE natural sentence establishing local credibility.
+
+Rules:
+- Keep it casual and brief (under 20 words ideal)
+- Don't mention loan amounts or borrower details
+- Prefer mentioning specific street names when available (e.g., "over on Neptune")
+- Use natural time references ("last month", "a couple months ago", "recently")
+- If multiple deals, you can say "We've done several deals in {city}"
+- Return ONLY the sentence, no quotes or explanation
+- If the data doesn't support a good sentence, return empty string"""
+
+    user_prompt = f"""Listing city: {context['listing_city']}
+Is TMF HQ city (Del Mar): {context['is_hq_city']}
+Recent deals in this city (within 12 months): {json.dumps(context['recent_deals'])}
+Older deals in this city: {json.dumps(context['older_deals'])}
+Total deals in this city: {context['total_deals_in_city']}
+
+Write one sentence about TMF's local presence/deals for the email intro."""
+
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            messages=[
+                {"role": "user", "content": user_prompt}
+            ],
+            system=system_prompt,
+        )
+        result = response.content[0].text.strip()
+        # Clean up any quotes the model might add
+        result = result.strip('"\'')
+        return result, is_hq
+    except Exception as e:
+        print(f"    Warning: Failed to generate local deal line: {e}")
+        return "", False
 
 
 def load_template(template_name: str) -> str:
@@ -115,16 +274,23 @@ def categorize_broker(broker: dict) -> Optional[tuple]:
     return None
 
 
-def generate_intro_single(first_name: str, address: str, category: tuple) -> str:
-    """Generate intro for a single property - no LLM needed, just template."""
+def generate_intro_single(first_name: str, address: str, category: tuple, local_deal_line: str = "") -> str:
+    """Generate intro for a single property, optionally with local deal reference."""
     status, role = category
     
+    # Build the intro sentence based on category
     if status == 'sold' and role == 'buyer':
-        return f"Hi {first_name},\n\nCongrats on closing {address}."
+        intro = f"Hi {first_name},\n\nCongrats on closing {address}."
     elif status == 'pending':
-        return f"Hi {first_name},\n\nCongrats on {address} going pending."
+        intro = f"Hi {first_name},\n\nCongrats on {address} going pending."
     else:  # active
-        return f"Hi {first_name},\n\nSaw your listing at {address} — beautiful spot."
+        intro = f"Hi {first_name},\n\nSaw your listing at {address} — beautiful spot."
+    
+    # Append local deal line if we have one
+    if local_deal_line:
+        intro = f"{intro} {local_deal_line}"
+    
+    return intro
 
 
 def generate_subject(broker: dict, category: tuple) -> str:
@@ -142,8 +308,13 @@ def generate_subject(broker: dict, category: tuple) -> str:
     return "quick intro"
 
 
-def get_template_body(template_name: str) -> str:
-    """Load template and extract boilerplate (skip greeting + personalized first paragraph)."""
+def get_template_body(template_name: str, skip_intro_line: bool = False) -> str:
+    """
+    Load template and extract boilerplate (skip greeting + personalized first paragraph).
+    
+    If skip_intro_line is True, also skip the "I run a private lending fund in Del Mar" line
+    (used when the local deal line already includes this for HQ city cases).
+    """
     content = load_template(template_name)
     lines = content.strip().split('\n')
     
@@ -160,14 +331,21 @@ def get_template_body(template_name: str) -> str:
             start_idx = i + 1
             break
     
-    return '\n'.join(lines[start_idx:]).strip()
+    boilerplate = '\n'.join(lines[start_idx:]).strip()
+    
+    if skip_intro_line:
+        # Remove the "I run a private lending fund in Del Mar." sentence
+        # The boilerplate typically starts with this, followed by "We do business-purpose loans..."
+        boilerplate = boilerplate.replace(
+            "I run a private lending fund in Del Mar. ", ""
+        )
+    
+    return boilerplate
 
 
-def build_full_email(intro: str, template_name: str) -> str:
-    """Combine personalized intro with template boilerplate (starting at 'I'm with Trinity...')."""
-    boilerplate = get_template_body(template_name)
-    # Intro already includes "Hi X," and first paragraph
-    # Boilerplate starts with "I'm with Trinity..."
+def build_full_email(intro: str, template_name: str, skip_intro_line: bool = False) -> str:
+    """Combine personalized intro with template boilerplate."""
+    boilerplate = get_template_body(template_name, skip_intro_line=skip_intro_line)
     return f"{intro}\n\n{boilerplate}"
 
 
@@ -190,8 +368,14 @@ def main():
     args = parser.parse_args()
     
     supabase = get_supabase_client()
+    claude = get_anthropic_client()
     
-    print(f"Fetching eligible brokers...")
+    # Fetch TMF deal history for local personalization
+    print("Fetching TMF deal history...")
+    tmf_deals = fetch_tmf_deals(supabase)
+    print(f"Loaded {len(tmf_deals)} TMF deals for local matching")
+    
+    print(f"\nFetching eligible brokers...")
     
     # Query outreach opportunities view
     result = supabase.table('outreach_opportunities').select('*').execute()
@@ -254,18 +438,30 @@ def main():
                 print(f"    Skipping - no {status}/{role} listings")
                 continue
             
-            # Generate intro - simple template for single, LLM for multiple
+            # Generate intro with local deal personalization
             try:
                 # Always pick one property (first/best match) - simpler and more natural
-                address = get_short_address(relevant[0].get('address', ''))
-                intro = generate_intro_single(first_name, address, category)
-                print(f"    Property: {address} ({len(relevant)} total)")
+                listing = relevant[0]
+                address = get_short_address(listing.get('address', ''))
+                listing_city = listing.get('city', '')
+                
+                # Find relevant TMF deals near this listing
+                deal_context = find_relevant_deals(listing_city, tmf_deals)
+                local_deal_line = ""
+                is_hq_format = False
+                if deal_context:
+                    local_deal_line, is_hq_format = generate_local_deal_line(deal_context, claude)
+                    if local_deal_line:
+                        print(f"    Local deal line: {local_deal_line}")
+                
+                intro = generate_intro_single(first_name, address, category, local_deal_line)
+                print(f"    Property: {address}, {listing_city} ({len(relevant)} total)")
             except Exception as e:
                 print(f"    Error generating intro: {e}")
                 continue
             
-            # Build full email
-            full_body = build_full_email(intro, template_name)
+            # Build full email (skip "I run a private lending fund" line if HQ format already includes it)
+            full_body = build_full_email(intro, template_name, skip_intro_line=is_hq_format)
             subject = generate_subject(broker, category)
             listing_ids = get_listing_ids(broker, category)
             

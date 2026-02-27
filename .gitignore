@@ -162,6 +162,7 @@ supabase-schema-diagram.html
 scripts/outreach/credentials.json
 scripts/outreach/token.json
 scripts/outreach/sent_emails.csv
+*service_account.json
 
 # Import conflict logs
 scripts/db/conflicts.json

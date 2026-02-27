@@ -1,7 +1,7 @@
 """
 Gmail API authentication and email sending.
 
-First run will open browser for OAuth. Token is cached in token.json.
+Uses Service Account with Domain-Wide Delegation for Google Workspace.
 
 Usage:
     from gmail_auth import send_email, get_gmail_service
@@ -20,46 +20,36 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SCOPES = [
     'https://www.googleapis.com/auth/gmail.send',
     'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.modify',
 ]
 
 SCRIPT_DIR = Path(__file__).parent
-CREDENTIALS_FILE = SCRIPT_DIR / 'credentials.json'
-TOKEN_FILE = SCRIPT_DIR / 'token.json'
+SERVICE_ACCOUNT_FILE = SCRIPT_DIR / 'service_account.json'
+USER_TO_IMPERSONATE = os.environ.get('GMAIL_USER', 'dan@trinitysd.com')
 
 
-def get_gmail_service():
-    """Get authenticated Gmail API service."""
-    creds = None
+def get_gmail_service(user_email: str = None):
+    """Get authenticated Gmail API service using service account."""
+    user = user_email or USER_TO_IMPERSONATE
     
-    if TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    if not SERVICE_ACCOUNT_FILE.exists():
+        raise FileNotFoundError(
+            f"service_account.json not found at {SERVICE_ACCOUNT_FILE}\n"
+            "Follow gmail_setup.md to create a service account and download the JSON key."
+        )
     
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not CREDENTIALS_FILE.exists():
-                raise FileNotFoundError(
-                    f"credentials.json not found at {CREDENTIALS_FILE}\n"
-                    "Follow gmail_setup.md to download OAuth credentials from Google Cloud."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(CREDENTIALS_FILE), SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        
-        TOKEN_FILE.write_text(creds.to_json())
-        print(f"Token saved to {TOKEN_FILE}")
+    credentials = service_account.Credentials.from_service_account_file(
+        str(SERVICE_ACCOUNT_FILE), scopes=SCOPES
+    )
+    delegated_creds = credentials.with_subject(user)
     
-    return build('gmail', 'v1', credentials=creds)
+    return build('gmail', 'v1', credentials=delegated_creds)
 
 
 def create_message(to: str, subject: str, body: str, 
