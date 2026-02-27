@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { MapContainer, TileLayer, GeoJSON } from 'react-leaflet'
 import type { GeoJsonObject, Feature, Geometry } from 'geojson'
+import { supabase } from '../lib/supabaseClient'
 
 const MAP_CENTER: [number, number] = [33.5, -117.4]
 const DEFAULT_ZOOM = 7
+const LAYER_NAME = 'socal_zctas'
 
 type ZipCodeMapProps = {
   selectedZips: Set<string>
@@ -23,13 +25,34 @@ export function ZipCodeMap({ selectedZips, onToggleZip }: ZipCodeMapProps) {
 
   useEffect(() => {
     setLoadError(null)
-    fetch('/socal_zctas.geojson')
-      .then((r) => {
-        if (!r.ok) throw new Error(`Failed to load map (${r.status})`)
-        return r.json()
-      })
-      .then(setGeojson)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load map'))
+    let cancelled = false
+
+    async function load() {
+      try {
+        const { data, error } = await supabase
+          .from('map_geojson')
+          .select('geojson')
+          .eq('name', LAYER_NAME)
+          .maybeSingle()
+        if (cancelled) return
+        if (!error && data?.geojson) {
+          setGeojson(data.geojson as GeoJsonObject)
+          return
+        }
+        // Fallback: static file (e.g. before upload or if table empty)
+        const res = await fetch('/socal_zctas.geojson')
+        if (!res.ok) throw new Error(`Failed to load map (${res.status})`)
+        const json = await res.json()
+        if (cancelled) return
+        setGeojson(json)
+      } catch (e) {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : 'Failed to load map')
+        }
+      }
+    }
+    load()
+    return () => { cancelled = true }
   }, [])
 
   const style = useCallback(
@@ -71,13 +94,12 @@ export function ZipCodeMap({ selectedZips, onToggleZip }: ZipCodeMapProps) {
       <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-4 text-center">
         <p className="text-sm font-medium text-[#374151]">Southern California ZIP map</p>
         <p className="text-[13px] text-[#6b7280]">
-          Generate the map by running:
+          Load the map by either:
           <br />
-          <code className="mt-1 block rounded bg-[#e5e7eb] px-2 py-1 text-xs">
-            python scripts/boundaries/census/build_socal_zctas.py
-          </code>
-          <span className="mt-2 block text-[12px]">
-            (Requires TIGER/Line ZCTA shapefile; see script for download link.)
+          <span className="mt-1 block text-[12px]">
+            1) Run <code className="rounded bg-[#e5e7eb] px-1">python scripts/db/upload_map_geojson.py</code> to upload GeoJSON to Supabase (after running migration 005_map_geojson.sql), or
+            <br />
+            2) Run <code className="rounded bg-[#e5e7eb] px-1">python scripts/boundaries/census/build_socal_zctas.py</code> to generate <code className="rounded bg-[#e5e7eb] px-1">frontend/public/socal_zctas.geojson</code>.
           </span>
         </p>
         <p className="text-[12px] text-red-600">{loadError}</p>
